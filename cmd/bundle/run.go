@@ -1,11 +1,15 @@
 package bundle
 
 import (
+	"encoding/json"
+	"fmt"
+
 	"github.com/databricks/bricks/bundle"
 	"github.com/databricks/bricks/bundle/deploy/terraform"
 	"github.com/databricks/bricks/bundle/phases"
 	"github.com/databricks/bricks/bundle/run"
 	"github.com/databricks/bricks/cmd/root"
+	"github.com/databricks/bricks/libs/flags"
 	"github.com/spf13/cobra"
 )
 
@@ -21,7 +25,9 @@ var runCmd = &cobra.Command{
 		b := bundle.Get(cmd.Context())
 		err := bundle.Apply(cmd.Context(), b, []bundle.Mutator{
 			phases.Initialize(),
-			terraform.Initialize(),
+			terraform.Interpolate(),
+			terraform.Write(),
+			terraform.StatePull(),
 			terraform.Load(),
 		})
 		if err != nil {
@@ -33,11 +39,28 @@ var runCmd = &cobra.Command{
 			return err
 		}
 
-		err = runner.Run(cmd.Context(), &runOptions)
+		output, err := runner.Run(cmd.Context(), &runOptions)
 		if err != nil {
 			return err
 		}
-
+		if output != nil {
+			switch outputType {
+			case flags.OutputText:
+				resultString, err := output.String()
+				if err != nil {
+					return err
+				}
+				cmd.OutOrStdout().Write([]byte(resultString))
+			case flags.OutputJSON:
+				b, err := json.MarshalIndent(output, "", "  ")
+				if err != nil {
+					return err
+				}
+				cmd.OutOrStdout().Write(b)
+			default:
+				return fmt.Errorf("unknown output type %s", outputType)
+			}
+		}
 		return nil
 	},
 
@@ -63,7 +86,10 @@ var runCmd = &cobra.Command{
 	},
 }
 
+var outputType flags.Output = flags.OutputText
+
 func init() {
 	runOptions.Define(runCmd.Flags())
 	rootCmd.AddCommand(runCmd)
+	runCmd.Flags().Var(&outputType, "output", "type of output format")
 }

@@ -8,10 +8,16 @@ import (
 	"github.com/databricks/bricks/bundle"
 )
 
+// TODO: refactor this package into service specific implementations. Its
+// getting bloated. (https://github.com/databricks/bricks/issues/282)
 type key string
 
 func (k key) Key() string {
 	return string(k)
+}
+
+type RunOutput interface {
+	String() (string, error)
 }
 
 // Runner defines the interface for a runnable resource (or workload).
@@ -21,7 +27,7 @@ type Runner interface {
 	Key() string
 
 	// Run the underlying worklow.
-	Run(ctx context.Context, opts *Options) error
+	Run(ctx context.Context, opts *Options) (RunOutput, error)
 }
 
 // Find locates a runner matching the specified argument.

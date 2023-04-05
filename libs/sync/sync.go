@@ -3,11 +3,10 @@ package sync
 import (
 	"context"
 	"fmt"
-	"log"
-	"sync"
 	"time"
 
 	"github.com/databricks/bricks/libs/git"
+	"github.com/databricks/bricks/libs/log"
 	"github.com/databricks/bricks/libs/sync/repofiles"
 	"github.com/databricks/databricks-sdk-go"
 )
@@ -33,6 +32,10 @@ type Sync struct {
 	fileSet   *git.FileSet
 	snapshot  *Snapshot
 	repoFiles *repofiles.RepoFiles
+
+	// Synchronization progress events are sent to this event notifier.
+	notifier EventNotifier
+	seq      int
 }
 
 // New initializes and returns a new [Sync] instance.
@@ -63,12 +66,12 @@ func New(ctx context.Context, opts SyncOptions) (*Sync, error) {
 	// For incremental sync, we try to load an existing snapshot to start from.
 	var snapshot *Snapshot
 	if opts.Full {
-		snapshot, err = newSnapshot(&opts)
+		snapshot, err = newSnapshot(ctx, &opts)
 		if err != nil {
 			return nil, fmt.Errorf("unable to instantiate new sync snapshot: %w", err)
 		}
 	} else {
-		snapshot, err = loadOrNewSnapshot(&opts)
+		snapshot, err = loadOrNewSnapshot(ctx, &opts)
 		if err != nil {
 			return nil, fmt.Errorf("unable to load sync snapshot: %w", err)
 		}
@@ -82,18 +85,52 @@ func New(ctx context.Context, opts SyncOptions) (*Sync, error) {
 		fileSet:   fileSet,
 		snapshot:  snapshot,
 		repoFiles: repoFiles,
+		notifier:  &NopNotifier{},
+		seq:       0,
 	}, nil
 }
 
-func (s *Sync) RunOnce(ctx context.Context) error {
-	repoFiles := repofiles.Create(s.RemotePath, s.LocalPath, s.WorkspaceClient)
-	applyDiff := syncCallback(ctx, repoFiles)
+func (s *Sync) Events() <-chan Event {
+	ch := make(chan Event, MaxRequestsInFlight)
+	s.notifier = &ChannelNotifier{ch}
+	return ch
+}
 
+func (s *Sync) Close() {
+	if s.notifier == nil {
+		return
+	}
+	s.notifier.Close()
+	s.notifier = nil
+}
+
+func (s *Sync) notifyStart(ctx context.Context, d diff) {
+	// If this is not the initial iteration we can ignore no-ops.
+	if s.seq > 0 && d.IsEmpty() {
+		return
+	}
+	s.notifier.Notify(ctx, newEventStart(s.seq, d.put, d.delete))
+}
+
+func (s *Sync) notifyProgress(ctx context.Context, action EventAction, path string, progress float32) {
+	s.notifier.Notify(ctx, newEventProgress(s.seq, action, path, progress))
+}
+
+func (s *Sync) notifyComplete(ctx context.Context, d diff) {
+	// If this is not the initial iteration we can ignore no-ops.
+	if s.seq > 0 && d.IsEmpty() {
+		return
+	}
+	s.notifier.Notify(ctx, newEventComplete(s.seq, d.put, d.delete))
+	s.seq++
+}
+
+func (s *Sync) RunOnce(ctx context.Context) error {
 	// tradeoff: doing portable monitoring only due to macOS max descriptor manual ulimit setting requirement
 	// https://github.com/gorakhargosh/watchdog/blob/master/src/watchdog/observers/kqueue.py#L394-L418
 	all, err := s.fileSet.All()
 	if err != nil {
-		log.Printf("[ERROR] cannot list files: %s", err)
+		log.Errorf(ctx, "cannot list files: %s", err)
 		return err
 	}
 
@@ -101,28 +138,29 @@ func (s *Sync) RunOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	s.notifyStart(ctx, change)
 	if change.IsEmpty() {
+		s.notifyComplete(ctx, change)
 		return nil
 	}
 
-	log.Printf("[INFO] Action: %v", change)
-	err = applyDiff(change)
+	err = s.applyDiff(ctx, change)
 	if err != nil {
 		return err
 	}
 
 	err = s.snapshot.Save(ctx)
 	if err != nil {
-		log.Printf("[ERROR] cannot store snapshot: %s", err)
+		log.Errorf(ctx, "cannot store snapshot: %s", err)
 		return err
 	}
 
+	s.notifyComplete(ctx, change)
 	return nil
 }
 
 func (s *Sync) RunContinuous(ctx context.Context) error {
-	var once sync.Once
-
 	ticker := time.NewTicker(s.PollInterval)
 	defer ticker.Stop()
 
@@ -135,10 +173,6 @@ func (s *Sync) RunContinuous(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-
-			once.Do(func() {
-				log.Printf("[INFO] Initial Sync Complete")
-			})
 		}
 	}
 }

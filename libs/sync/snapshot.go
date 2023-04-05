@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"encoding/hex"
 
 	"github.com/databricks/bricks/libs/fileset"
+	"github.com/databricks/bricks/libs/log"
 	"github.com/databricks/bricks/libs/notebook"
 )
 
@@ -88,7 +88,7 @@ func SnapshotPath(opts *SyncOptions) (string, error) {
 	return filepath.Join(snapshotDir, fileName), nil
 }
 
-func newSnapshot(opts *SyncOptions) (*Snapshot, error) {
+func newSnapshot(ctx context.Context, opts *SyncOptions) (*Snapshot, error) {
 	path, err := SnapshotPath(opts)
 	if err != nil {
 		return nil, err
@@ -126,8 +126,8 @@ func (s *Snapshot) Save(ctx context.Context) error {
 	return nil
 }
 
-func loadOrNewSnapshot(opts *SyncOptions) (*Snapshot, error) {
-	snapshot, err := newSnapshot(opts)
+func loadOrNewSnapshot(ctx context.Context, opts *SyncOptions) (*Snapshot, error) {
+	snapshot, err := newSnapshot(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -150,8 +150,8 @@ func loadOrNewSnapshot(opts *SyncOptions) (*Snapshot, error) {
 
 	// invalidate old snapshot with schema versions
 	if fromDisk.Version != LatestSnapshotVersion {
-		log.Printf("Did not load existing snapshot because its version is %s while the latest version is %s", snapshot.Version, LatestSnapshotVersion)
-		return newSnapshot(opts)
+		log.Warnf(ctx, "Did not load existing snapshot because its version is %s while the latest version is %s", snapshot.Version, LatestSnapshotVersion)
+		return newSnapshot(ctx, opts)
 	}
 
 	// unmarshal again over the existing snapshot instance
@@ -165,13 +165,17 @@ func loadOrNewSnapshot(opts *SyncOptions) (*Snapshot, error) {
 }
 
 func (s *Snapshot) diff(all []fileset.File) (change diff, err error) {
-	currentFilenames := map[string]bool{}
 	lastModifiedTimes := s.LastUpdatedTimes
 	remoteToLocalNames := s.RemoteToLocalNames
 	localToRemoteNames := s.LocalToRemoteNames
+
+	// set of files currently present in the local file system and tracked by git
+	localFileSet := map[string]struct{}{}
 	for _, f := range all {
-		// create set of current files to figure out if removals are needed
-		currentFilenames[f.Relative] = true
+		localFileSet[f.Relative] = struct{}{}
+	}
+
+	for _, f := range all {
 		// get current modified timestamp
 		modified := f.Modified()
 		lastSeenModified, seen := lastModifiedTimes[f.Relative]
@@ -207,11 +211,13 @@ func (s *Snapshot) diff(all []fileset.File) (change diff, err error) {
 				change.delete = append(change.delete, oldRemoteName)
 				delete(remoteToLocalNames, oldRemoteName)
 			}
+
 			// We cannot allow two local files in the project to point to the same
 			// remote path
-			oldLocalName, ok := remoteToLocalNames[remoteName]
-			if ok && oldLocalName != f.Relative {
-				return change, fmt.Errorf("both %s and %s point to the same remote file location %s. Please remove one of them from your local project", oldLocalName, f.Relative, remoteName)
+			prevLocalName, ok := remoteToLocalNames[remoteName]
+			_, prevLocalFileExists := localFileSet[prevLocalName]
+			if ok && prevLocalName != f.Relative && prevLocalFileExists {
+				return change, fmt.Errorf("both %s and %s point to the same remote file location %s. Please remove one of them from your local project", prevLocalName, f.Relative, remoteName)
 			}
 			localToRemoteNames[f.Relative] = remoteName
 			remoteToLocalNames[remoteName] = f.Relative
@@ -220,7 +226,7 @@ func (s *Snapshot) diff(all []fileset.File) (change diff, err error) {
 	// figure out files in the snapshot.lastModifiedTimes, but not on local
 	// filesystem. These will be deleted
 	for localName := range lastModifiedTimes {
-		_, exists := currentFilenames[localName]
+		_, exists := localFileSet[localName]
 		if exists {
 			continue
 		}

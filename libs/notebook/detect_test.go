@@ -10,27 +10,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDetect(t *testing.T) {
+func TestDetectSource(t *testing.T) {
 	var nb bool
 	var lang workspace.Language
 	var err error
 
-	nb, lang, err = Detect("./testdata/py.py")
+	nb, lang, err = Detect("./testdata/py_source.py")
 	require.NoError(t, err)
 	assert.True(t, nb)
 	assert.Equal(t, workspace.LanguagePython, lang)
 
-	nb, lang, err = Detect("./testdata/r.r")
+	nb, lang, err = Detect("./testdata/r_source.r")
 	require.NoError(t, err)
 	assert.True(t, nb)
 	assert.Equal(t, workspace.LanguageR, lang)
 
-	nb, lang, err = Detect("./testdata/scala.scala")
+	nb, lang, err = Detect("./testdata/scala_source.scala")
 	require.NoError(t, err)
 	assert.True(t, nb)
 	assert.Equal(t, workspace.LanguageScala, lang)
 
-	nb, lang, err = Detect("./testdata/sql.sql")
+	nb, lang, err = Detect("./testdata/sql_source.sql")
 	require.NoError(t, err)
 	assert.True(t, nb)
 	assert.Equal(t, workspace.LanguageSql, lang)
@@ -41,14 +41,27 @@ func TestDetect(t *testing.T) {
 	assert.Equal(t, workspace.Language(""), lang)
 }
 
+func TestDetectCallsDetectJupyter(t *testing.T) {
+	nb, lang, err := Detect("./testdata/py_ipynb.ipynb")
+	require.NoError(t, err)
+	assert.True(t, nb)
+	assert.Equal(t, workspace.LanguagePython, lang)
+}
+
 func TestDetectUnknownExtension(t *testing.T) {
-	nb, _, err := Detect("./testdata/doesntexist.foobar")
+	_, _, err := Detect("./testdata/doesntexist.foobar")
+	assert.True(t, os.IsNotExist(err))
+
+	nb, _, err := Detect("./testdata/unknown_extension.foobar")
 	require.NoError(t, err)
 	assert.False(t, nb)
 }
 
 func TestDetectNoExtension(t *testing.T) {
-	nb, _, err := Detect("./testdata/doesntexist")
+	_, _, err := Detect("./testdata/doesntexist")
+	assert.True(t, os.IsNotExist(err))
+
+	nb, _, err := Detect("./testdata/no_extension")
 	require.NoError(t, err)
 	assert.False(t, nb)
 }

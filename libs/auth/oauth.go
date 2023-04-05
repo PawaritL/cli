@@ -30,7 +30,7 @@ const (
 	appRedirectAddr = "localhost:8020"
 
 	// maximum amount of time to acquire listener on appRedirectAddr
-	DefaultTimeout = 15 * time.Second
+	DefaultTimeout = 45 * time.Second
 )
 
 var ( // Databricks SDK API: `databricks OAuth is not` will be checked for presence
@@ -201,18 +201,7 @@ func (a *PersistentAuth) oauth2Config() (*oauth2.Config, error) {
 	// taxonomy of all scopes ready and implemented.
 	scopes := []string{
 		"offline_access",
-		"unity-catalog",
-		"accounts",
-		"clusters",
-		"mlflow",
-		"scim",
-		"sql",
-	}
-	if a.AccountID != "" {
-		scopes = []string{
-			"offline_access",
-			"accounts",
-		}
+		"all-apis",
 	}
 	endpoints, err := a.oidcEndpoints()
 	if err != nil {

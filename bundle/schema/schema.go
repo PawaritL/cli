@@ -35,6 +35,9 @@ type Schema struct {
 	// Required properties for the object. Any fields missing the "omitempty"
 	// json tag will be included
 	Required []string `json:"required,omitempty"`
+
+	// URI to a json schema
+	Reference *string `json:"$ref,omitempty"`
 }
 
 // This function translates golang types into json schema. Here is the mapping
@@ -62,7 +65,7 @@ func New(golangType reflect.Type, docs *Docs) (*Schema, error) {
 	tracker := newTracker()
 	schema, err := safeToSchema(golangType, docs, "", tracker)
 	if err != nil {
-		return nil, tracker.errWithTrace(err.Error())
+		return nil, tracker.errWithTrace(err.Error(), "root")
 	}
 	return schema, nil
 }
@@ -187,7 +190,7 @@ func toSchema(golangType reflect.Type, docs *Docs, tracker *tracker) (*Schema, e
 	schema := &Schema{Type: rootJavascriptType}
 
 	if docs != nil {
-		schema.Description = docs.Documentation
+		schema.Description = docs.Description
 	}
 
 	// case array/slice
@@ -197,7 +200,11 @@ func toSchema(golangType reflect.Type, docs *Docs, tracker *tracker) (*Schema, e
 		if err != nil {
 			return nil, err
 		}
-		elemProps, err := safeToSchema(elemGolangType, docs, "", tracker)
+		var childDocs *Docs
+		if docs != nil {
+			childDocs = docs.Items
+		}
+		elemProps, err := safeToSchema(elemGolangType, childDocs, "", tracker)
 		if err != nil {
 			return nil, err
 		}
@@ -215,7 +222,11 @@ func toSchema(golangType reflect.Type, docs *Docs, tracker *tracker) (*Schema, e
 		if golangType.Key().Kind() != reflect.String {
 			return nil, fmt.Errorf("only string keyed maps allowed")
 		}
-		schema.AdditionalProperties, err = safeToSchema(golangType.Elem(), docs, "", tracker)
+		var childDocs *Docs
+		if docs != nil {
+			childDocs = docs.AdditionalProperties
+		}
+		schema.AdditionalProperties, err = safeToSchema(golangType.Elem(), childDocs, "", tracker)
 		if err != nil {
 			return nil, err
 		}
@@ -227,6 +238,11 @@ func toSchema(golangType reflect.Type, docs *Docs, tracker *tracker) (*Schema, e
 		properties := map[string]*Schema{}
 		required := []string{}
 		for _, child := range children {
+			bundleTag := child.Tag.Get("bundle")
+			if bundleTag == "readonly" {
+				continue
+			}
+
 			// get child json tags
 			childJsonTag := strings.Split(child.Tag.Get("json"), ",")
 			childName := childJsonTag[0]
@@ -240,8 +256,8 @@ func toSchema(golangType reflect.Type, docs *Docs, tracker *tracker) (*Schema, e
 			// get docs for the child if they exist
 			var childDocs *Docs
 			if docs != nil {
-				if val, ok := docs.Children[childName]; ok {
-					childDocs = &val
+				if val, ok := docs.Properties[childName]; ok {
+					childDocs = val
 				}
 			}
 

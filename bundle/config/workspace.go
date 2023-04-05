@@ -1,7 +1,12 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
+
+	"github.com/databricks/bricks/libs/databrickscfg"
 	"github.com/databricks/databricks-sdk-go"
+	"github.com/databricks/databricks-sdk-go/config"
 	"github.com/databricks/databricks-sdk-go/service/scim"
 )
 
@@ -45,7 +50,7 @@ type Workspace struct {
 
 	// CurrentUser holds the current user.
 	// This is set after configuration initialization.
-	CurrentUser *scim.User `json:"current_user,omitempty"`
+	CurrentUser *scim.User `json:"current_user,omitempty" bundle:"readonly"`
 
 	// Remote base path for deployment state, for artifacts, as synchronization target.
 	// This defaults to "~/.bundle/${bundle.name}/${bundle.environment}" where "~" expands to
@@ -66,7 +71,7 @@ type Workspace struct {
 }
 
 func (w *Workspace) Client() (*databricks.WorkspaceClient, error) {
-	config := databricks.Config{
+	cfg := databricks.Config{
 		// Generic
 		Host:    w.Host,
 		Profile: w.Profile,
@@ -83,5 +88,27 @@ func (w *Workspace) Client() (*databricks.WorkspaceClient, error) {
 		AzureLoginAppID:  w.AzureLoginAppID,
 	}
 
-	return databricks.NewWorkspaceClient(&config)
+	// If only the host is configured, we try and unambiguously match it to
+	// a profile in the user's databrickscfg file. Override the default loaders.
+	cfg.Loaders = []config.Loader{
+		// Defaults.
+		config.ConfigAttributes,
+		config.ConfigFile,
+
+		// Our loader that resolves a profile from the host alone.
+		// This only kicks in if the above loaders don't configure auth.
+		databrickscfg.ResolveProfileFromHost,
+	}
+
+	return databricks.NewWorkspaceClient(&cfg)
+}
+
+func init() {
+	arg0 := os.Args[0]
+
+	// Configure BRICKS_CLI_PATH only if our caller intends to use this specific version of this binary.
+	// Otherwise, if it is equal to its basename, processes can find it in $PATH.
+	if arg0 != filepath.Base(arg0) {
+		os.Setenv("BRICKS_CLI_PATH", arg0)
+	}
 }
