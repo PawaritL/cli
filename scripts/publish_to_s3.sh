@@ -2,7 +2,7 @@
 
 set -e
 
-latest=$(gh release list | head -1 | awk '{print $1}')
+latest=$(gh release list | grep -v snapshot | head -1 | awk '{print $1}')
 echo "Downloading ${latest}..."
 
 mkdir "${latest}"
