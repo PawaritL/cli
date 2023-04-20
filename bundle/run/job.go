@@ -8,8 +8,10 @@ import (
 
 	"github.com/databricks/bricks/bundle"
 	"github.com/databricks/bricks/bundle/config/resources"
+	"github.com/databricks/bricks/bundle/run/output"
+	"github.com/databricks/bricks/bundle/run/progress"
+	"github.com/databricks/bricks/libs/cmdio"
 	"github.com/databricks/bricks/libs/log"
-	"github.com/databricks/bricks/libs/progress"
 	"github.com/databricks/databricks-sdk-go/retries"
 	"github.com/databricks/databricks-sdk-go/service/jobs"
 	"github.com/fatih/color"
@@ -131,6 +133,9 @@ func (r *jobRunner) logFailedTasks(ctx context.Context, runId int64) {
 				log.Errorf(ctx, "task %s failed. Unable to fetch error trace: %s", red(task.TaskKey), err)
 				continue
 			}
+			if progressLogger, ok := cmdio.FromContext(ctx); ok {
+				progressLogger.Log(progress.NewTaskErrorEvent(task.TaskKey, taskInfo.Error, taskInfo.ErrorTrace))
+			}
 			log.Errorf(ctx, "Task %s failed!\nError:\n%s\nTrace:\n%s",
 				red(task.TaskKey), taskInfo.Error, taskInfo.ErrorTrace)
 		} else {
@@ -177,7 +182,7 @@ func logDebugCallback(ctx context.Context, runId *int64) func(info *retries.Info
 	}
 }
 
-func logProgressCallback(ctx context.Context, progressLogger *progress.Logger) func(info *retries.Info[jobs.Run]) {
+func logProgressCallback(ctx context.Context, progressLogger *cmdio.Logger) func(info *retries.Info[jobs.Run]) {
 	var prevState *jobs.RunState
 	return func(info *retries.Info[jobs.Run]) {
 		i := info.Info
@@ -190,6 +195,10 @@ func logProgressCallback(ctx context.Context, progressLogger *progress.Logger) f
 			return
 		}
 
+		if prevState == nil {
+			progressLogger.Log(progress.NewJobRunUrlEvent(i.RunPageUrl))
+		}
+
 		if prevState != nil && prevState.LifeCycleState == state.LifeCycleState &&
 			prevState.ResultState == state.ResultState {
 			return
@@ -197,13 +206,12 @@ func logProgressCallback(ctx context.Context, progressLogger *progress.Logger) f
 			prevState = state
 		}
 
-		event := &JobProgressEvent{
-			Timestamp:  time.Now(),
-			JobId:      i.JobId,
-			RunId:      i.RunId,
-			RunName:    i.RunName,
-			State:      *i.State,
-			RunPageURL: i.RunPageUrl,
+		event := &progress.JobProgressEvent{
+			Timestamp: time.Now(),
+			JobId:     i.JobId,
+			RunId:     i.RunId,
+			RunName:   i.RunName,
+			State:     *i.State,
 		}
 
 		// log progress events to stderr
@@ -214,7 +222,7 @@ func logProgressCallback(ctx context.Context, progressLogger *progress.Logger) f
 	}
 }
 
-func (r *jobRunner) Run(ctx context.Context, opts *Options) (RunOutput, error) {
+func (r *jobRunner) Run(ctx context.Context, opts *Options) (output.RunOutput, error) {
 	jobID, err := strconv.ParseInt(r.job.ID, 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("job ID is not an integer: %s", r.job.ID)
@@ -241,7 +249,7 @@ func (r *jobRunner) Run(ctx context.Context, opts *Options) (RunOutput, error) {
 	logDebug := logDebugCallback(ctx, runId)
 
 	// callback to log progress events. Called on every poll request
-	progressLogger, ok := progress.FromContext(ctx)
+	progressLogger, ok := cmdio.FromContext(ctx)
 	if !ok {
 		return nil, fmt.Errorf("no progress logger found")
 	}
@@ -274,7 +282,7 @@ func (r *jobRunner) Run(ctx context.Context, opts *Options) (RunOutput, error) {
 	// The task completed successfully.
 	case jobs.RunResultStateSuccess:
 		log.Infof(ctx, "Run has completed successfully!")
-		return getJobOutput(ctx, r.bundle.WorkspaceClient(), *runId)
+		return output.GetJobOutput(ctx, r.bundle.WorkspaceClient(), *runId)
 
 	// The run was stopped after reaching the timeout.
 	case jobs.RunResultStateTimedout:

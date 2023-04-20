@@ -10,19 +10,6 @@ import (
 	"github.com/databricks/databricks-sdk-go/service/scim"
 )
 
-type PathLike struct {
-	// Workspace contains a WSFS path.
-	Workspace string `json:"workspace,omitempty"`
-
-	// DBFS contains a DBFS path.
-	DBFS string `json:"dbfs,omitempty"`
-}
-
-// IsSet returns whether either path is non-nil.
-func (p PathLike) IsSet() bool {
-	return p.Workspace != "" || p.DBFS != ""
-}
-
 // Workspace defines configurables at the workspace level.
 type Workspace struct {
 	// Unified authentication attributes.
@@ -52,22 +39,22 @@ type Workspace struct {
 	// This is set after configuration initialization.
 	CurrentUser *scim.User `json:"current_user,omitempty" bundle:"readonly"`
 
-	// Remote base path for deployment state, for artifacts, as synchronization target.
+	// Remote workspace base path for deployment state, for artifacts, as synchronization target.
 	// This defaults to "~/.bundle/${bundle.name}/${bundle.environment}" where "~" expands to
 	// the current user's home directory in the workspace (e.g. `/Users/jane@doe.com`).
-	Root string `json:"root,omitempty"`
+	RootPath string `json:"root_path,omitempty"`
 
-	// Remote path to synchronize local files to.
+	// Remote workspace path to synchronize local files to.
 	// This defaults to "${workspace.root}/files".
-	FilePath PathLike `json:"file_path,omitempty"`
+	FilesPath string `json:"file_path,omitempty"`
 
-	// Remote path for build artifacts.
+	// Remote workspace path for build artifacts.
 	// This defaults to "${workspace.root}/artifacts".
-	ArtifactPath PathLike `json:"artifact_path,omitempty"`
+	ArtifactsPath string `json:"artifact_path,omitempty"`
 
-	// Remote path for deployment state.
+	// Remote workspace path for deployment state.
 	// This defaults to "${workspace.root}/state".
-	StatePath PathLike `json:"state_path,omitempty"`
+	StatePath string `json:"state_path,omitempty"`
 }
 
 func (w *Workspace) Client() (*databricks.WorkspaceClient, error) {
@@ -88,16 +75,20 @@ func (w *Workspace) Client() (*databricks.WorkspaceClient, error) {
 		AzureLoginAppID:  w.AzureLoginAppID,
 	}
 
+	// HACKY fix to not used host based auth when the profile is already set
+	profile := os.Getenv("DATABRICKS_CONFIG_PROFILE")
+
 	// If only the host is configured, we try and unambiguously match it to
 	// a profile in the user's databrickscfg file. Override the default loaders.
-	cfg.Loaders = []config.Loader{
-		// Defaults.
-		config.ConfigAttributes,
-		config.ConfigFile,
+	if w.Host != "" && w.Profile == "" && profile == "" {
+		cfg.Loaders = []config.Loader{
+			// Load auth creds from env vars
+			config.ConfigAttributes,
 
-		// Our loader that resolves a profile from the host alone.
-		// This only kicks in if the above loaders don't configure auth.
-		databrickscfg.ResolveProfileFromHost,
+			// Our loader that resolves a profile from the host alone.
+			// This only kicks in if the above loaders don't configure auth.
+			databrickscfg.ResolveProfileFromHost,
+		}
 	}
 
 	return databricks.NewWorkspaceClient(&cfg)
