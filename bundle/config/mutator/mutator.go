@@ -1,7 +1,7 @@
 package mutator
 
 import (
-	"github.com/databricks/bricks/bundle"
+	"github.com/databricks/cli/bundle"
 )
 
 func DefaultMutators() []bundle.Mutator {
@@ -9,6 +9,7 @@ func DefaultMutators() []bundle.Mutator {
 		DefineDefaultInclude(),
 		ProcessRootIncludes(),
 		DefineDefaultEnvironment(),
+		LoadGitDetails(),
 	}
 }
 

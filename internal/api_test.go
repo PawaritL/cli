@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	_ "github.com/databricks/bricks/cmd/api"
+	_ "github.com/databricks/cli/cmd/api"
 )
 
 func TestAccApiGet(t *testing.T) {
@@ -34,18 +34,18 @@ func TestAccApiPost(t *testing.T) {
 		t.Skip("DBFS REST API is disabled on gcp")
 	}
 
-	dbfsPath := path.Join("/tmp/bricks/integration", RandomName("api-post"))
+	dbfsPath := path.Join("/tmp/databricks/integration", RandomName("api-post"))
 	requestPath := writeFile(t, "body.json", fmt.Sprintf(`{
 		"path": "%s"
 	}`, dbfsPath))
 
 	// Post to mkdir
 	{
-		RequireSuccessfulRun(t, "api", "post", "--body=@"+requestPath, "/api/2.0/dbfs/mkdirs")
+		RequireSuccessfulRun(t, "api", "post", "--json=@"+requestPath, "/api/2.0/dbfs/mkdirs")
 	}
 
 	// Post to delete
 	{
-		RequireSuccessfulRun(t, "api", "post", "--body=@"+requestPath, "/api/2.0/dbfs/delete")
+		RequireSuccessfulRun(t, "api", "post", "--json=@"+requestPath, "/api/2.0/dbfs/delete")
 	}
 }
