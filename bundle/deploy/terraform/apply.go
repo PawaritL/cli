@@ -28,6 +28,16 @@ func (w *apply) Apply(ctx context.Context, b *bundle.Bundle) error {
 		return fmt.Errorf("terraform init: %w", err)
 	}
 
+	tfVersion, providerVersion, err := tf.Version(ctx, true)
+	if err != nil {
+		return fmt.Errorf("terraform version: %w", err)
+	}
+
+	cmdio.LogString(ctx, fmt.Sprintf("Terraform version: %s", tfVersion))
+	for provider, version := range providerVersion {
+		cmdio.LogString(ctx, fmt.Sprintf("Terraform provider %s version: %s", provider, version.String()))
+	}
+
 	err = tf.Apply(ctx)
 	if err != nil {
 		return fmt.Errorf("terraform apply: %w", err)
