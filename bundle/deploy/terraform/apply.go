@@ -3,6 +3,7 @@ package terraform
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/databricks/cli/bundle"
 	"github.com/databricks/cli/libs/cmdio"
@@ -37,6 +38,10 @@ func (w *apply) Apply(ctx context.Context, b *bundle.Bundle) error {
 	for provider, version := range providerVersion {
 		cmdio.LogString(ctx, fmt.Sprintf("Terraform provider %s version: %s", provider, version.String()))
 	}
+
+	d, _ := Dir(b)
+	tf.SetLogProvider("DEBUG")
+	tf.SetLogPath(filepath.Join(d, "terraform.log"))
 
 	err = tf.Apply(ctx)
 	if err != nil {
